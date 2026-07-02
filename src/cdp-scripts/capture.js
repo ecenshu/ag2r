@@ -190,14 +190,35 @@ export const CAPTURE_SCRIPT = `
               seenIds.add(id);
               // Classify attention type by checking for SVG icon near the ping.
               // The ping lives inside a status container (group-hover:invisible div).
-              // If that container has an SVG, the agent needs intervention.
+              // AG uses Lucide SVG icons to indicate why the agent is blocked:
+              //   - lucide-terminal* → command needs approval
+              //   - lucide-message* → agent has a question
+              //   - other SVG       → generic attention (fallback)
+              //   - no SVG          → agent just finished (completed)
               let statusContainer = ping;
               for (let j = 0; j < 5 && statusContainer; j++) {
                 if ((statusContainer.getAttribute('class') || '').includes('group-hover:invisible')) break;
                 statusContainer = statusContainer.parentElement;
               }
-              const hasSvgIcon = statusContainer ? !!statusContainer.querySelector('svg') : false;
-              sidebarAttentionItems.push({ id, type: hasSvgIcon ? 'permission' : 'completed' });
+              const svgEl = statusContainer ? statusContainer.querySelector('svg') : null;
+              let type = 'completed';
+              if (svgEl) {
+                const svgClass = svgEl.getAttribute('class') || '';
+                if (svgClass.includes('lucide-terminal')) type = 'command';
+                else if (svgClass.includes('lucide-message')) type = 'question';
+                else type = 'permission'; // fallback for any other SVG icon
+              }
+              // Extract conversation name from the sidebar item text
+              let name = '';
+              let nameEl = ping;
+              for (let k = 0; k < 10 && nameEl; k++) {
+                if (nameEl.getAttribute('role') === 'button') {
+                  name = (nameEl.textContent || '').trim();
+                  break;
+                }
+                nameEl = nameEl.parentElement;
+              }
+              sidebarAttentionItems.push({ id, type, name });
             }
             break;
           }
@@ -240,37 +261,48 @@ export const CAPTURE_SCRIPT = `
   let dialogHtml = null;
   try {
     for (const child of document.body.children) {
-      if (child.id || child.tagName === 'SCRIPT' || child.tagName === 'STYLE') continue;
+      if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE') continue;
       const text = child.textContent.trim();
       if (!text) continue;
 
-      // Dropdown menu (role="listbox")
-      if (!dropdownHtml && child.getAttribute('role') === 'listbox') {
-        const tagged = tagInteractives(child, 'dropdown', true, false);
-        const clone = child.cloneNode(true);
-        untagAll(tagged);
-        dropdownHtml = clone.outerHTML;
-      }
+      // The target element for portal detection: either the child itself,
+      // or a nested portal inside an ID-wrapped Radix container (div#radix-:rXX:).
+      // Radix wraps portals in ID'd divs — we need to look inside them.
+      const targets = child.id
+        ? Array.from(child.querySelectorAll('[role="dialog"], [role="listbox"]'))
+        : [child];
 
-      // Dialog/modal (fixed overlay with buttons)
-      const cls = child.className || '';
-      if (!dialogHtml && cls.includes('fixed') && cls.includes('inset-0')) {
-        const tagged = tagInteractives(child, 'dialog', true, false);
-        const clone = child.cloneNode(true);
-        untagAll(tagged);
-        clone.querySelectorAll('style').forEach(s => s.remove());
-        dialogHtml = clone.outerHTML;
-      }
+      for (const target of targets) {
+        // Dropdown menu (role="listbox")
+        if (!dropdownHtml && target.getAttribute('role') === 'listbox') {
+          const tagged = tagInteractives(target, 'dropdown', true, false);
+          const clone = target.cloneNode(true);
+          untagAll(tagged);
+          dropdownHtml = clone.outerHTML;
+        }
 
-      // Popover dialog (role="dialog" portal, e.g. environment selector, context menus)
-      if (!dialogHtml && child.getAttribute('role') === 'dialog') {
-        const tagged = tagInteractives(child, 'dialog', true, false);
-        const clone = child.cloneNode(true);
-        untagAll(tagged);
-        clone.querySelectorAll('style').forEach(s => s.remove());
-        dialogHtml = clone.outerHTML;
+        // Dialog/modal (fixed overlay with buttons)
+        const cls = (target.className || '').toString();
+        if (!dialogHtml && cls.includes('fixed') && cls.includes('inset-0')) {
+          const tagged = tagInteractives(target, 'dialog', true, false);
+          const clone = target.cloneNode(true);
+          untagAll(tagged);
+          clone.querySelectorAll('style').forEach(s => s.remove());
+          dialogHtml = clone.outerHTML;
+        }
+
+        // Popover dialog (role="dialog" portal, e.g. environment selector, context menus)
+        if (!dialogHtml && target.getAttribute('role') === 'dialog') {
+          const tagged = tagInteractives(target, 'dialog', true, false);
+          const clone = target.cloneNode(true);
+          untagAll(tagged);
+          clone.querySelectorAll('style').forEach(s => s.remove());
+          dialogHtml = clone.outerHTML;
+        }
       }
     }
+
+
   } catch (e) {
     console.debug('[AG2R] Portal capture error:', e.message);
   }
