@@ -229,11 +229,11 @@ export const CAPTURE_SCRIPT = `
     console.debug('[AG2R] Sidebar signature error:', e.message);
   }
   // Sidebar open state: true when AG's right sidebar panel is visible.
-  // AG keeps the sidebar DOM (including data-tab-id buttons) even when closed —
-  // it slides it offscreen. Detect by checking if tab buttons are within the viewport.
-  const firstTab = document.querySelector('[data-tab-id]');
-  const isSidebarOpen = firstTab ? firstTab.getBoundingClientRect().left < window.innerWidth : false;
-  console.debug('[SidebarMirror:capture] isSidebarOpen:', isSidebarOpen, 'tab:', firstTab ? 'exists' : 'null', 'left:', firstTab?.getBoundingClientRect().left, 'vw:', window.innerWidth);
+  // When SideBar is closed, the toggle button is in the DOM and if it is open, then the toggle button is not in the DOM
+  const sidebarToggleBtn = document.querySelector('[data-testid="toggle-aux-sidebar"]');
+  const isSidebarOpen = sidebarToggleBtn ? false : true;
+  console.debug('[SidebarMirror:capture] isSidebarOpen:', isSidebarOpen);
+  
   // -- 8. Capture portal elements (dropdowns, dialogs) from body --
   // AG renders these outside #root as direct body children.
   let dropdownHtml = null;

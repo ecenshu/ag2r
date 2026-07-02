@@ -984,12 +984,24 @@ app.post('/toggle-sidebar', async (req, res) => {
     return res.status(503).json({ error: 'CDP not connected' });
   }
   try {
-    await evaluateInBrowser(`
-      (() => {
-        const btn = document.querySelector('[data-testid="toggle-aux-sidebar"]');
-        if (btn) btn.click();
-      })()
+    let result = await evaluateInBrowser(`
+       (() => {
+    const toggleBtn = document.querySelector('[data-testid="toggle-aux-sidebar"]');
+    if (toggleBtn) {
+        toggleBtn.click();
+        return 'opened';
+    }
+    
+    const closeBtn = document.querySelector('[data-testid="close-aux-pane"]');
+    if (closeBtn) {
+      closeBtn.click();
+      return 'closed';
+    }
+    return null;
+  })()
     `);
+    log('ToggleSidebar', result || 'buttons_not_found');
+
     res.json({ ok: true });
   } catch (e) {
     console.debug('[ToggleSidebar] Error:', e.message);
