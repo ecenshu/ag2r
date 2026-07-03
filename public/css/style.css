@@ -101,6 +101,7 @@ body {
   letter-spacing: -0.02em;
   color: var(--text-primary);
   flex: 1;
+  min-width: 0;
 }
 
 .header-icon {
@@ -129,6 +130,11 @@ body {
 .icon-btn:active {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* ── Notification Bell ── */
+#notification-bell {
+  position: relative;
 }
 
 /* ── Connection Status Dot ── */
