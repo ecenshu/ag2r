@@ -2,6 +2,15 @@
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
+// Fire-and-forget telemetry — works even with no open tabs
+function trackEvent(event, payload = {}) {
+  fetch('/telemetry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, ...payload }),
+  }).catch(() => {}); // swallow network errors
+}
+
 self.addEventListener('push', (event) => {
   let data = {};
   try {
@@ -32,6 +41,8 @@ self.addEventListener('notificationclick', (event) => {
   const url = event.notification.data?.url;
   const conversationId = event.notification.data?.conversationId;
 
+  trackEvent('push_clicked', { conversationId });
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       // If an AG2R window is already open, tell it to navigate and focus it
@@ -48,4 +59,9 @@ self.addEventListener('notificationclick', (event) => {
       if (url) return clients.openWindow(url);
     })
   );
+});
+
+self.addEventListener('notificationclose', (event) => {
+  const conversationId = event.notification.data?.conversationId;
+  trackEvent('push_dismissed', { conversationId });
 });

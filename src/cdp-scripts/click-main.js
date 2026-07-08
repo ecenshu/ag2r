@@ -85,6 +85,36 @@ export function buildMainClickScript(safeClickId, safeLabel) {
                  settingsOverlay.querySelector('[class*="rounded-2xl"]') ||
                  settingsOverlay;
         }
+      } else if (source === 'ask') {
+        // Ask question modal: find Submit+Skip buttons, walk up to card wrapper,
+        // enumerate labels then buttons (same order as capture tagging)
+        const allBtns = Array.from(document.querySelectorAll('button'));
+        const skipBtn = allBtns.find(b => b.textContent.trim() === 'Skip');
+        const submitBtn = allBtns.find(b => /^Submit/.test(b.textContent.trim()));
+        if (skipBtn && submitBtn) {
+          let container = skipBtn;
+          for (let i = 0; i < 20 && container.parentElement; i++) {
+            container = container.parentElement;
+            if (container.contains(submitBtn)) break;
+          }
+          let cardRoot = container;
+          for (let i = 0; i < 5 && cardRoot.parentElement; i++) {
+            const cls = (cardRoot.className || '').toString();
+            if (cls.includes('bg-card-border')) break;
+            cardRoot = cardRoot.parentElement;
+          }
+          const askEls = [];
+          cardRoot.querySelectorAll('[role="radiogroup"] label, [role="group"] label').forEach(el => askEls.push(el));
+          cardRoot.querySelectorAll('button').forEach(el => askEls.push(el));
+          if (idx >= 0 && idx < askEls.length) {
+            const target = askEls[idx];
+            const actualLabel = (target.textContent || '').trim().substring(0, 50);
+            target.click();
+            return { ok: true, label: actualLabel, source: 'ask' };
+          }
+          return { ok: false, reason: 'ask_index_out_of_range', total: askEls.length };
+        }
+        return { ok: false, reason: 'no_ask_question_modal' };
       } else if (source === 'perm') {
         // Permission banner: find radiogroup document-wide (it's outside the scroll container)
         const radioGroup = document.querySelector('[role="radiogroup"]');
@@ -150,6 +180,24 @@ export function buildMainClickScript(safeClickId, safeLabel) {
           return { ok: false, reason: 'subinfo_index_out_of_range', total: btns.length };
         }
         return { ok: false, reason: 'no_subinfo_panel' };
+      } else if (source === 'model') {
+        // Model selector button — opens AG's model picker dialog
+        const target = document.querySelector('[aria-label*="Select model"]');
+        if (target) {
+          const actualLabel = (target.textContent || '').trim().substring(0, 50);
+          target.click();
+          return { ok: true, label: actualLabel, source: 'model' };
+        }
+        return { ok: false, reason: 'model_button_not_found' };
+      } else if (source === 'project') {
+        // Project dropdown button — opens AG's project picker dialog
+        const target = document.querySelector('[aria-haspopup="dialog"]');
+        if (target) {
+          const actualLabel = (target.textContent || '').trim().substring(0, 50);
+          target.click();
+          return { ok: true, label: actualLabel, source: 'project' };
+        }
+        return { ok: false, reason: 'project_button_not_found' };
       }
 
       if (!root) return { ok: false, reason: 'no_root_for_' + source };

@@ -1,5 +1,8 @@
 // server.js — AG2R Server
 // CDP connection, snapshot capture, WebSocket broadcasting, Express, auth
+import 'dotenv/config'; // Side-effect import: loads .env before other modules evaluate
+
+
 import express from 'express';
 import { createServer as createHttpsServer } from 'https';
 import { createServer as createHttpServer } from 'http';
@@ -14,7 +17,6 @@ import cookieParser from 'cookie-parser';
 import compression from 'compression';
 import selfsigned from 'selfsigned';
 import multer from 'multer';
-import dotenv from 'dotenv';
 import webpush from 'web-push';
 import { track, startSession, endSession } from './src/telemetry.js';
 import { fetchFlags, getFlags } from './src/feature-flags.js';
@@ -51,17 +53,17 @@ import { SELECT_OVERVIEW_TAB_SCRIPT } from './src/cdp-scripts/select-overview-ta
 import { buildProxyImageScript } from './src/cdp-scripts/proxy-image.js';
 import { HAS_VISIBLE_EDITOR_SCRIPT } from './src/cdp-scripts/has-visible-editor.js';
 
-dotenv.config();
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// === Configuration (SSoT: .env.example) ===
+// === Configuration ===
+// Primary config is in .env (see .env.example for user-facing vars).
+// Advanced vars below have sensible defaults and are documented here only.
 const PORT = parseInt(process.env.PORT || '3000');
-const CDP_HOST = process.env.CDP_HOST || '127.0.0.1';
-const CDP_PORT = parseInt(process.env.CDP_PORT || '9000');
-const APP_PASSWORD = process.env.APP_PASSWORD || 'antigravity';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'ag2r-default-secret';
-const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL_MS || '500');
+const CDP_HOST = process.env.CDP_HOST || '127.0.0.1';       // Chrome DevTools Protocol host
+const CDP_PORT = parseInt(process.env.CDP_PORT || '9000');   // Chrome DevTools Protocol port
+const APP_PASSWORD = process.env.APP_PASSWORD;               // Required when AUTH_ENABLED=true
+const SESSION_SECRET = process.env.SESSION_SECRET;           // Required when AUTH_ENABLED=true
+const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL_MS || '500'); // AG polling interval (ms)
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const TUNNEL_ENABLED = process.env.TUNNEL_ENABLED === 'true';
 const TUNNEL_URL = process.env.TUNNEL_URL || '';
@@ -101,8 +103,6 @@ const VAPID_KEYS_PATH = getConfigPath('vapid-keys.json');
 const LEGACY_VAPID_KEYS_PATH = path.join(__dirname, 'vapid-keys.json');
 const PUSH_SUBS_PATH = getConfigPath('push-subscriptions.json');
 const pushSubscriptions = new Map(); // endpoint → { ...PushSubscription, origin }
-let lastPushSentAt = 0;
-const PUSH_COOLDOWN_MS = 30_000; // 30 seconds between push notifications
 
 // Load or generate VAPID keys on startup
 function initVapid() {
@@ -213,10 +213,12 @@ async function sendPushToAll(payload) {
   stale.forEach(ep => pushSubscriptions.delete(ep));
   if (stale.length > 0) saveSubscriptions();
   log('Push', `Done: ${sent} delivered, ${stale.length} removed`);
+  track('push_sent', { subscriberCount: pushSubscriptions.size, delivered: sent, staleRemoved: stale.length, body: payload.body });
 }
 
 // Check if any conversation needs attention and send a push notification.
-// Skips when app is in foreground (visibleClients > 0).
+// Dedup tracking always runs (even when app is foregrounded) so that items
+// seen in-app aren't re-notified when the user backgrounds the app.
 // SW-side dedup (getNotifications) prevents spamming unread notifications.
 // Server-side dedup: tracks notified conversation IDs to avoid re-notifying
 // until the conversation leaves the attention list (user attended to it).
@@ -227,7 +229,6 @@ function truncName(name) {
 }
 
 function checkAttentionState(snapshot) {
-  if (visibleClients > 0) return; // App is in foreground — no push needed
   if (pushPaused) return; // User paused notifications
 
   const attentionItems = (snapshot.sidebarAttentionItems || [])
@@ -251,6 +252,11 @@ function checkAttentionState(snapshot) {
 
   // Send one notification per new conversation (unique tag so they stack)
   for (const item of newItems) {
+    notifiedConversations.add(item.id);
+
+    console.debug('[Push] Decision:', item.id.slice(0, 8), 'visibleClients:', visibleClients, visibleClients > 0 ? '→ SKIP' : '→ SEND');
+    if (visibleClients > 0) continue; // Track but don't send while user is looking
+
     const name = truncName(item.name);
     let body;
     if (item.type === 'question') {
@@ -259,7 +265,6 @@ function checkAttentionState(snapshot) {
       body = name ? `Command approval | ${name}` : 'Command approval';
     }
 
-    notifiedConversations.add(item.id);
     log('Push', `Attention detected — sending for ${name || item.id}`);
     sendPushToAll({
       title: appName,
@@ -739,6 +744,7 @@ function fireBurstCaptures(delays) {
             (snapshot.dropdownHtml || '') +
             (snapshot.dialogHtml || '') +
             (snapshot.settingsHtml || '') +
+            (snapshot.askQuestionHtml || '') +
             (snapshot.permissionHtml || '') +
             (snapshot.runningTasksHtml || '') +
             (snapshot.scheduledTasksHtml || '') +
@@ -789,6 +795,7 @@ function startPolling() {
           (snapshot.dropdownHtml || '') +
           (snapshot.dialogHtml || '') +
           (snapshot.settingsHtml || '') +
+          (snapshot.askQuestionHtml || '') +
           (snapshot.permissionHtml || '') +
           (snapshot.runningTasksHtml || '') +
           (snapshot.scheduledTasksHtml || '') +
@@ -896,7 +903,7 @@ if (TUNNEL_ENABLED) {
 }
 
 // --- Auth Middleware ---
-const PUBLIC_PATHS = ['/login', '/login.html', '/favicon.ico'];
+const PUBLIC_PATHS = ['/login', '/login.html', '/favicon.ico', '/manifest.json'];
 
 app.use((req, res, next) => {
   // Auth disabled — skip entirely (feature branch testing)
@@ -1223,7 +1230,11 @@ app.post('/restart-antigravity', async (req, res) => {
     // Wait for process to die, then relaunch
     setTimeout(() => {
       log('Restart', 'Relaunching Antigravity...');
-      exec('open -a Antigravity --args --remote-debugging-port=9000', (err) => {
+      // Launch AG in a fresh login shell so it doesn't inherit AG2R's env vars.
+      // env -i clears all env, then bash -l rebuilds from shell configs (~/.bash_profile, etc.)
+      // — same clean environment as when cron's ag-watchdog.sh starts AG.
+      const home = process.env.HOME || '/Users/' + process.env.USER;
+      exec(`env -i HOME=${home} /bin/bash -l -c 'open -a Antigravity --args --remote-debugging-port=9000'`, (err) => {
         if (err) log('Restart', 'Relaunch error:', err.message);
         else log('Restart', 'Relaunch command sent');
       });
@@ -1253,6 +1264,8 @@ app.post('/telemetry', (req, res) => {
     'quick_action_used',
     'hard_refresh',
     'coffee_link_clicked',
+    'push_clicked',
+    'push_dismissed',
   ]);
   if (!allowed.has(event)) {
     return res.status(400).json({ error: 'unknown event' });
@@ -1384,13 +1397,61 @@ app.post('/click', async (req, res) => {
     // dialog/dropdown DOM appearing (React render takes 50-200ms)
     if (result?.ok) {
       const source = result.source || '';
-      if (['chat', 'dropdown', 'dialog', 'left'].includes(source)) {
+      if (['chat', 'dropdown', 'dialog', 'left', 'model', 'project'].includes(source)) {
         // Fire 3 rapid captures at 150ms, 400ms, 700ms
         fireBurstCaptures([150, 400, 700]);
       }
     }
   } catch (e) {
     log('Click', `Error: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Submit Dialog (Permission / Ask Question) ---
+// Atomically injects write-in text into AG's textarea and clicks Submit.
+// Body: { text?: string, clickId: string, label: string }
+app.post('/submit-dialog', async (req, res) => {
+  const { text, clickId, label } = req.body;
+  log('SubmitDialog', `clickId=${clickId} label="${label}" text="${text || ''}"`);
+
+  if (!clickId && clickId !== 0) {
+    return res.status(400).json({ error: 'clickId is required' });
+  }
+  if (!cdpClient) {
+    return res.status(503).json({ error: 'CDP not connected' });
+  }
+
+  try {
+    // Step 1: If write-in text provided, inject it into AG's textarea
+    if (text && text.trim()) {
+      const safeText = JSON.stringify(text);
+      const injectScript = `(() => {
+        const rg = document.querySelector('[role="radiogroup"]') || document.querySelector('[role="group"]');
+        if (!rg) return { ok: false, reason: 'no_radiogroup' };
+        const ta = rg.querySelector('textarea');
+        if (!ta) return { ok: false, reason: 'no_textarea' };
+        ta.focus();
+        const ns = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        ns.call(ta, ${safeText});
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true, text: ta.value };
+      })()`;
+      const injectResult = await evaluateInBrowser(injectScript);
+      log('SubmitDialog', `Inject result: ${JSON.stringify(injectResult)}`);
+
+      // Wait for React to process the text change
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    // Step 2: Click the Submit button
+    const clickScript = buildMainClickScript(JSON.stringify(String(clickId)), JSON.stringify(label || ''));
+    const result = await evaluateInBrowser(clickScript);
+    log('SubmitDialog', `Click result: ${JSON.stringify(result)}`);
+    res.json(result || { ok: false, reason: 'null_result' });
+  } catch (e) {
+    log('SubmitDialog', `Error: ${e.message}`);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1605,6 +1666,7 @@ app.post('/push/subscribe', (req, res) => {
   pushSubscriptions.set(subscription.endpoint, { ...subscription, origin });
   saveSubscriptions();
   log('Push', `Subscribed (${pushSubscriptions.size} total) from ${origin}`);
+  track('push_registered', { subscriberCount: pushSubscriptions.size });
   res.json({ ok: true });
 });
 
@@ -1615,6 +1677,7 @@ app.post('/push/unsubscribe', (req, res) => {
     saveSubscriptions();
   }
   log('Push', `Unsubscribed (${pushSubscriptions.size} total)`);
+  track('push_unregistered', { subscriberCount: pushSubscriptions.size });
   res.json({ ok: true });
 });
 
@@ -1633,8 +1696,6 @@ app.get('/push/status', (req, res) => {
     subscribers: pushSubscriptions.size,
     endpoints: [...pushSubscriptions.keys()].map(ep => ep.substring(0, 80) + '...'),
     vapidPublicKey: vapidKeys.publicKey,
-    lastPushSentAt: lastPushSentAt ? new Date(lastPushSentAt).toISOString() : null,
-    cooldownMs: PUSH_COOLDOWN_MS,
   });
 });
 
@@ -1647,6 +1708,7 @@ app.post('/push/pause', (req, res) => {
   pushPaused = true;
   savePauseState();
   log('Push', 'Notifications paused by user');
+  track('push_paused');
   res.json({ ok: true, paused: true });
 });
 
@@ -1654,6 +1716,7 @@ app.post('/push/resume', (req, res) => {
   pushPaused = false;
   savePauseState();
   log('Push', 'Notifications resumed by user');
+  track('push_resumed');
   res.json({ ok: true, paused: false });
 });
 
