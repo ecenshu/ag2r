@@ -811,7 +811,7 @@ function startPolling() {
 
         // Only broadcast and update cache when content actually changes
         if (hash !== lastSnapshotHash) {
-          console.debug('[SidebarMirror:server] isSidebarOpen:', snapshot.isSidebarOpen, 'sig:', snapshot.sidebarSignature);
+          console.debug('[SidebarMirror:server] isSidebarOpen:', snapshot.isSidebarOpen, 'sig:', snapshot.sidebarSignature, 'hash:', hash);
           cachedSnapshot = snapshot;
           cachedSnapshot.hash = hash;
           lastSnapshotHash = hash;

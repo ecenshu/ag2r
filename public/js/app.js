@@ -455,6 +455,16 @@ async function loadSnapshot() {
           rightSidebar.inert = true;
           rightSidebarOverlay.classList.remove('visible');
         }
+        const toggleBtn = document.querySelector('#review-toggle');
+        if (!data.isSidebarOpen && !data.isSidebarContentsAvailable) {
+          if (toggleBtn) {
+            toggleBtn.classList.add('hidden');
+          }
+        } else {
+          if (toggleBtn) {
+            toggleBtn.classList.remove('hidden');
+          }
+        }
       }
 
       // Rescue the input-wrapper back to the footer before wiping chatContent.

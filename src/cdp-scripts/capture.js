@@ -253,11 +253,26 @@ export const CAPTURE_SCRIPT = `
   } catch (e) {
     console.debug('[AG2R] Sidebar signature error:', e.message);
   }
+  
   // Sidebar open state: true when AG's right sidebar panel is visible.
   // When SideBar is closed, the toggle button is in the DOM and if it is open, then the toggle button is not in the DOM
-  const sidebarToggleBtn = document.querySelector('[data-testid="toggle-aux-sidebar"]');
-  const isSidebarOpen = sidebarToggleBtn ? false : true;
+  const sidebarToggleBtn = document.querySelector('[data-testid="toggle-aux-sidebar"]'); // element exists when sidebar contains contents, not available when sidebar is empty or already showing sidebar contents
+  const isSidebarOpenable = sidebarToggleBtn ? true : false;
+  
+  let isSidebarOpen = sidebarToggleBtn ? false : true;
   console.debug('[SidebarMirror:capture] isSidebarOpen:', isSidebarOpen);
+  
+  // Sidebar open state: AG wraps the sidebar in a collapse container with inline styles:
+  //   closed: style="width: 0%; visibility: hidden; overflow: hidden"
+  //   open:   style="width: ~47%; visibility: visible; overflow: hidden"
+  // Check the collapse container's inline style.width (instant, not affected by
+  // CSS transitions) instead of getBoundingClientRect (which reflects animated
+  // position and is fragile across different window sizes).
+  const firstTab = document.querySelector('[data-tab-id]');
+  const isSidebarContentsAvailable = firstTab ? true : false;
+
+  console.debug('[SidebarMirror:capture] isSidebarContentsAvailable:', isSidebarContentsAvailable, 'tab:', firstTab ? 'exists' : 'null');
+  isSidebarOpen = (!isSidebarOpenable && isSidebarContentsAvailable);
   
   // -- 8. Capture portal elements (dropdowns, dialogs) from body --
   // AG renders these outside #root as direct body children.
@@ -620,6 +635,7 @@ export const CAPTURE_SCRIPT = `
     console.debug('[AG2R] BTW capture error:', e.message);
   }
 
-  return { html, css, agentRunning, scrollInfo, leftSidebarHtml, sidebarAttentionItems, sidebarSignature, isSidebarOpen, isNewSessionPage, isInputBoxHidden, isSubagentView, parentConversationName, subagentInfoHtml, dropdownHtml, dialogHtml, settingsHtml, activeArtifactUri, activeFileUri, askQuestionHtml, permissionHtml, environmentName, branchName, modelName, btwHtml };
+  // let innerHtml = document.documentElement.innerHTML;
+  return { html, css, agentRunning, scrollInfo, leftSidebarHtml, sidebarAttentionItems, sidebarSignature, isSidebarOpen, isSidebarContentsAvailable, isNewSessionPage, isInputBoxHidden, isSubagentView, parentConversationName, subagentInfoHtml, dropdownHtml, dialogHtml, settingsHtml, activeArtifactUri, activeFileUri, askQuestionHtml, permissionHtml, environmentName, branchName, modelName, btwHtml };
 })()
 `;
