@@ -130,6 +130,9 @@ export const CAPTURE_SCRIPT = `
     const cleaned = classes.replace(/\\[object Object\\]/g, '').replace(/\\s+/g, ' ').trim();
     return 'class="' + cleaned + '"';
   });
+  
+  // -- 12a. Normalize waiting prompt
+  html = html.replace(  /Waiting for user input\\.{0,3}/g,  "Waiting for user input");
 
   // -- 13. Collect CSS --
   let css = '';
@@ -436,6 +439,8 @@ export const CAPTURE_SCRIPT = `
         el.removeAttribute('data-ag-click-label');
       });
       permissionHtml = permClone.outerHTML;
+      // Normalize waiting prompt
+      permissionHtml = permissionHtml.replace(  /Waiting for user input\\.{0,3}/g,  "Waiting for user input");
     }
   } catch (e) {
     console.debug('[AG2R] Permission banner capture error:', e.message);
