@@ -170,7 +170,7 @@ export const CAPTURE_SCRIPT = `
   let leftSidebarHtml = null;
   let sidebarAttentionItems = [];
   try {
-    const leftRoot = document.querySelector('.bg-sidebar');
+    const leftRoot = document.querySelector('[role="navigation"].bg-sidebar');
     if (leftRoot && leftRoot.offsetParent !== null) {
       const leftTagged = tagInteractives(leftRoot, 'left', true, true);
       const leftClone = leftRoot.cloneNode(true);
